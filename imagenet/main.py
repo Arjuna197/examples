@@ -5,6 +5,7 @@ import shutil
 import time
 import warnings
 
+from data_generator import RandomDataset
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -23,8 +24,9 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
+parser.add_argument('data', metavar='DIR', default='',
                     help='path to dataset')
+parser.add_argument('--synthetic', action='store_true')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
@@ -197,21 +199,23 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
-
+    if args.synthetic:
+      train_dataset = RandomDataset()
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    else:
+      traindir = os.path.join(args.data, 'train')
+      valdir = os.path.join(args.data, 'val')
+      normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                       std=[0.229, 0.224, 0.225])
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+      train_dataset = datasets.ImageFolder(
+          traindir,
+          transforms.Compose([
+              transforms.RandomResizedCrop(224),
+              transforms.RandomHorizontalFlip(),
+              transforms.ToTensor(),
+              normalize,
+          ]))
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -221,16 +225,22 @@ def main_worker(gpu, ngpus_per_node, args):
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+    if args.synthetic:
+      val_loader = torch.utils.data.DataLoader(
+          train_dataset,
+          batch_size=args.batch_size, shuffle=False,
+          num_workers=args.workers, pin_memory=True)
 
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+    else:
+      val_loader = torch.utils.data.DataLoader(
+          datasets.ImageFolder(valdir, transforms.Compose([
+              transforms.Resize(256),
+              transforms.CenterCrop(224),
+              transforms.ToTensor(),
+              normalize,
+          ])),
+          batch_size=args.batch_size, shuffle=False,
+          num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
         validate(val_loader, model, criterion, args)
@@ -307,6 +317,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
+            print("%f images/sec" %  (float(args.batch_size)/float(batch_time.avg+data_time.avg)))
 
 
 def validate(val_loader, model, criterion, args):
